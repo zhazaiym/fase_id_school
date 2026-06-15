@@ -1,5 +1,6 @@
 import sqlite3
 from datetime import datetime
+import pickle
 
 import cursor
 import numpy as np
@@ -10,78 +11,97 @@ DB_NAME = "school.db"
 
 
 def init_db():
-    conn = sqlite3.connect("school.db")  # Файл атын так жазыңыз
-    cursor = conn.cursor()
+    conn = sqlite3.connect("school.db")
+    cur = conn.cursor()
 
-    # Таблица бар-жогун текшерип, болбосо түзөт
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS students (
-            name TEXT PRIMARY KEY,
-            class_name TEXT,
-            parent_id TEXT,
-            photo_path TEXT,
-            embedding BLOB,
-            parent_chat_id TEXT
-        )
-    """)
+    # Төмөнкү саптарды өЧҮРҮП САЛЫҢЫЗ:
+    # cur.execute("DROP TABLE IF EXISTS students")
+    # cur.execute("DROP TABLE IF EXISTS attendance")
+
+    # Эми таблицаларды ушундай түрдө калтырыңыз:
+    cur.execute('''CREATE TABLE IF NOT EXISTS students (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT,
+                        class_name TEXT,
+                        photo_path TEXT,
+                        parent_chat_id TEXT,
+                        embedding BLOB
+                    )''')
+    cur.execute('''CREATE TABLE IF NOT EXISTS attendance (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT,
+                        class_name TEXT,
+                        status TEXT,
+                        date TEXT,
+                        timestamp TEXT
+                    )''')
     conn.commit()
     conn.close()
-    print("✅ База текшерилди жана таблицалар түзүлдү.")
 
 
 def load_all_students():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT name, parent_chat_id, embedding, class_name FROM students")
-    rows = cursor.fetchall()
-    conn.close()
+    conn = sqlite3.connect("school.db")
+    cur = conn.cursor()
+    cur.execute("SELECT name, parent_chat_id, embedding, class_name FROM students")
+    rows = cur.fetchall()
 
-    names, chat_ids, embeddings, classes = [], [], [], []
+    names = []
+    chat_ids = []
+    embeddings = []
+    classes = []
+
     for row in rows:
         names.append(row[0])
-        chat_ids.append(row[1] if row[1] else "Катталган эмес")
-        # embedding (BLOB) маалыматын туура иштетүү
-        embeddings.append(np.frombuffer(row[2], dtype=np.float32) if row[2] else np.zeros(512))
+        chat_ids.append(row[1])
+        # Байты кайра массивге айландырабыз
+        embeddings.append(pickle.loads(row[2]))
         classes.append(row[3])
 
-    # БУЛ СЕП ЭҢ МААНИЛҮҮ:
+    conn.close()
     return names, chat_ids, embeddings, classes
 
 import sqlite3
 from datetime import datetime
 
 
-def log_attendance(name, class_name):
+import sqlite3
+from datetime import datetime
+
+def log_attendance(name, class_name, status):
     conn = sqlite3.connect("school.db")
     cur = conn.cursor()
-
-    # Бүгүнкү күндү алабыз (YYYY-MM-DD)
     today = datetime.now().strftime("%Y-%m-%d")
+    now_time = datetime.now().strftime("%H:%M")
 
-    # 1. Окуучу бүгүн "келди" деп катталганбы текшеребиз
-    # Эгер базада ошол ат менен жана бүгүнкү күндө жазуу болсо, кайра жазбайбыз
-    cur.execute("""
-        SELECT id FROM attendance 
-        WHERE name = ? AND status = 'келди' AND date(timestamp) = ? 
-        LIMIT 1
-    """, (name, today))
+    # 1. Окуучу бүгүн катталганбы?
+    cur.execute("SELECT id, status FROM attendance WHERE name=? AND date=? ORDER BY id DESC LIMIT 1", (name, today))
+    row = cur.fetchone()
 
-    already_exists = cur.fetchone()
+    if row:
+        # Эгер окуучу бүгүн "келди" деп катталган болсо жана азыр "ketti" статусун алса:
+        if row[1] == "keldi" and status == "ketti":
+            cur.execute("UPDATE attendance SET status=?, timestamp=? WHERE id=?", ("ketti", now_time, row[0]))
+            conn.commit()
+            conn.close()
+            return True # Статус өзгөрдү -> Билдирүү жөнөтүлсүн
+        else:
+            # Эгер статус өзгөрбөсө (мисалы: кайра "келди" десе), эч нерсе кылба
+            conn.close()
+            return False
+    else:
+        # Эгер бул окуучунун бүгүнкү алгачкы жазуусу болсо
+        if status == "keldi":
+            cur.execute("INSERT INTO attendance (name, class_name, status, date, timestamp) VALUES (?, ?, ?, ?, ?)",
+                        (name, class_name, "keldi", today, now_time))
+            conn.commit()
+            conn.close()
+            return True # Жаңы "келди" жазуусу кошулду
+        else:
+            conn.close()
+            return False
 
-    # 2. Эгер мурунтан катталган болсо, эч нерсе кылбайбыз
-    if already_exists:
-        conn.close()
-        return False  # Бул жерде "катталган" деген белги
-
-    # 3. Эгер жаңы болсо, базага жазабыз
-    timestamp = datetime.now().strftime("%H:%M")
-    cur.execute("INSERT INTO attendance (name, class_name, status, timestamp) VALUES (?, ?, ?, ?)",
-                (name, class_name, 'келди', timestamp))
-
-    conn.commit()
     conn.close()
-    return True  # Бул жерде "жаңы катталды" деген белги
-
+    return False
 def get_teacher_chat_id(class_name):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -101,23 +121,35 @@ def get_students_by_class(class_name):
     conn.close()
     return data
 
+
 def get_class_attendance(class_name):
     conn = sqlite3.connect("school.db")
     cur = conn.cursor()
-    # Келүү тарыхын алуу
-    cur.execute("SELECT name, timestamp FROM attendance WHERE class_name = ? ORDER BY timestamp DESC", (class_name.strip(),))
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    # Бүгүнкү күндөгү ошол класстын маалыматтарын алабыз
+    cur.execute("SELECT name, timestamp, status FROM attendance WHERE class_name=? AND date=?", (class_name, today))
     data = cur.fetchall()
     conn.close()
     return data
 
-def save_student(name, class_name, parent_chat_id, photo_path, embedding):
+
+import sqlite3
+import pickle  # Бул китепкана массивдерди сактоо үчүн керек
+
+
+def save_student(name, class_name, chat_id, photo_path, embedding):
     conn = sqlite3.connect("school.db")
     cur = conn.cursor()
-    # Базада 5 мамыча бар экенин текшериңиз (name, class_name, parent_chat_id, photo_path, embedding)
+
+    # Эмбеддингди сактоо үчүн аны байт форматына айландырабыз
+    embedding_blob = pickle.dumps(embedding)
+
     cur.execute("""
-        INSERT OR REPLACE INTO students (name, class_name, parent_chat_id, photo_path, embedding) 
+        INSERT INTO students (name, class_name, parent_chat_id, photo_path, embedding) 
         VALUES (?, ?, ?, ?, ?)
-    """, (name, class_name, parent_chat_id, photo_path, embedding.tobytes()))
+    """, (name, class_name, chat_id, photo_path, embedding_blob))
+
     conn.commit()
     conn.close()
 

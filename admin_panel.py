@@ -4,8 +4,9 @@ import shutil
 import uvicorn
 from database import init_db
 
-# Программа ишке кирээри менен таблицаларды түзөт
+# Программа ишке кирерде таблицаны түзүп алуу
 init_db()
+
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles

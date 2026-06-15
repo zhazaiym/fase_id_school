@@ -1,8 +1,11 @@
 import os
 import sqlite3
+from datetime import datetime
+
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from database import init_db
+from main import bot
 
 # Проксини системадан өчүрүү
 os.environ.pop("HTTP_PROXY", None)
@@ -30,6 +33,21 @@ async def teacher_register(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
     await update.message.reply_text(f"✅ {class_name} классына катталдыңыз.")
 
+
+async def send_telegram_alert(chat_id, name, status, photo_path):
+    now = datetime.now().strftime("%H:%M")
+
+    # Статуска жараша билдирүү
+    if status == "keldi":
+        text = f"✅ {name} мектепке келди!\n⏰ Убакыт: {now}"
+    else:
+        text = f"❌ {name} мектептен кетти!\n⏰ Убакыт: {now}"
+
+    # Telegramга жөнөтүү
+    try:
+        await bot.send_photo(chat_id=chat_id, photo=open(photo_path, 'rb'), caption=text)
+    except Exception as e:
+        print(f"Ката: {e}")
 
 def main():
     init_db()

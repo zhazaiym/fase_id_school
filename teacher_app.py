@@ -21,7 +21,7 @@ def main(page: ft.Page):
     attendance_list = ft.ListView(expand=1, spacing=5)
 
     def update_teacher_ui(class_name):
-        # 1. Окуучулардын тизмесин көрсөтүү
+        # 1. Окуучулардын тизмеси
         students = get_students_by_class(class_name)
         student_list.controls.clear()
         for name, chat_id in students:
@@ -30,17 +30,24 @@ def main(page: ft.Page):
                 ft.Text(chat_id if chat_id else "ID жок")
             ]))
 
-        # 2. Келди/Кетти журналын көрсөтүү
+        # 2. Келди/Кетти журналы
         attendance = get_class_attendance(class_name)
         attendance_list.controls.clear()
+
         if not attendance:
             attendance_list.controls.append(ft.Text("Бүгүн эч ким келген жок."))
         else:
-            for name, time in attendance:
+            for name, time, status in attendance:
+                # Бул жерде "кетти" болсо кызыл, "келди" болсо жашыл болот
+                color = ft.colors.RED if status == "ketti" else ft.colors.GREEN
+                icon = "❌" if status == "ketti" else "✅"
+
                 attendance_list.controls.append(ft.Row([
-                    ft.Text(name),
-                    ft.Text(f"✅ келди ({time})", color="green")
+                    ft.Text(f"{name}: ", weight="bold", width=120),
+                    ft.Text(f"{icon} {status} ({time})", color=color, weight="bold")
                 ]))
+
+            # ЭҢ МААНИЛҮҮСҮ:
         page.update()
 
     def show_dashboard(class_name):
