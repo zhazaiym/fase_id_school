@@ -9,12 +9,13 @@ from telegram import Update
 from telegram.error import Conflict, Forbidden, InvalidToken, NetworkError, TelegramError, TimedOut
 from telegram.ext import Application, CommandHandler, ContextTypes
 from telegram.request import HTTPXRequest
+from config import BOT_TOKEN
 from database import init_db
 
 for proxy_name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
     os.environ.pop(proxy_name, None)
 
-TOKEN = "8819848632:AAEAigdVRaYAg9mcmSCi_kEA4MhyO-huLzw"
+TOKEN = BOT_TOKEN
 LOCK_FILE = Path("bot_setup.lock")
 CONFLICT_STOP_REQUESTED = False
 

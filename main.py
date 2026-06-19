@@ -7,27 +7,29 @@ import cv2
 import numpy as np
 from insightface.app import FaceAnalysis
 from telegram import Bot
-from telegram.error import Forbidden, InvalidToken, NetworkError, TelegramError, TimedOut
+from telegram.error import BadRequest, Forbidden, InvalidToken, NetworkError, TelegramError, TimedOut
 from telegram.request import HTTPXRequest
 
+from config import BOT_TOKEN, DEFAULT_CHAT_ID
 from database import get_teacher_chat_id, has_attendance_today, init_db, load_all_students, log_attendance
 
 for proxy_name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
     os.environ.pop(proxy_name, None)
 
-TOKEN = "8819848632:AAEAigdVRaYAg9mcmSCi_kEA4MhyO-huLzw"
-DEFAULT_CHAT_ID = "1639133042"
+TOKEN = BOT_TOKEN
 SCREENSHOTS_DIR = "screenshots"
 UNKNOWN_NAME = "unknown"
 RECOGNITION_WIDTH = 320
 RECOGNITION_INTERVAL_SECONDS = 1.0
 CAMERA_READ_SLEEP_SECONDS = 0.005
+REQUIRE_LIVENESS_FOR_NOTIFICATION = False
 LIVENESS_MIN_OBSERVATIONS = 8
 LIVENESS_WINDOW_SECONDS = 10.0
 LIVENESS_TURN_THRESHOLD = 0.16
 LIVENESS_MIN_TOTAL_YAW_CHANGE = 0.32
 LIVENESS_MAX_CENTER_MOVEMENT = 60.0
 EMPTY_CHAT_IDS = {"", "None", "Катталган эмес"}
+EMPTY_CHAT_IDS.update({"РљР°С‚С‚Р°Р»РіР°РЅ СЌРјРµСЃ"})
 CAMERAS = [
     {"index": 0, "window": "Laptop Camera - keldi", "status": "keldi"},
     {"index": 1, "window": "Web Camera - ketti", "status": "ketti"},
@@ -94,11 +96,16 @@ class CameraStream:
             self.thread.join(timeout=1.0)
         self.cap.release()
 
+
+def is_valid_chat_id(chat_id):
+    chat_id = str(chat_id).strip() if chat_id else ""
+    return chat_id.lstrip("-").isdigit()
+
 async def send_telegram_alert(chat_id, name, status, photo_path):
     now = datetime.now().strftime("%H:%M")
     text = f"{name} {status}\nTime: {now}"
     chat_id = str(chat_id).strip() if chat_id else ""
-    if chat_id in EMPTY_CHAT_IDS:
+    if chat_id in EMPTY_CHAT_IDS or not is_valid_chat_id(chat_id):
         chat_id = DEFAULT_CHAT_ID
 
     try:
@@ -113,6 +120,8 @@ async def send_telegram_alert(chat_id, name, status, photo_path):
         print("Telegram error: bot token is invalid. Create a new token in BotFather.")
     except Forbidden:
         print(f"Telegram error for {chat_id}: user did not press /start or blocked the bot.")
+    except BadRequest as e:
+        print(f"Telegram bad request for {chat_id}: {e}. Check DEFAULT_CHAT_ID or press /start in the bot.")
     except TimedOut:
         print("Telegram error: request timed out. Check internet/VPN access to api.telegram.org.")
     except NetworkError as e:
@@ -126,11 +135,11 @@ async def send_telegram_alert(chat_id, name, status, photo_path):
 
 def resolve_chat_id(parent_chat_id, class_name):
     parent_chat_id = str(parent_chat_id).strip() if parent_chat_id else ""
-    if parent_chat_id not in EMPTY_CHAT_IDS:
+    if parent_chat_id not in EMPTY_CHAT_IDS and is_valid_chat_id(parent_chat_id):
         return parent_chat_id
 
     teacher_chat_id = get_teacher_chat_id(class_name)
-    if teacher_chat_id:
+    if is_valid_chat_id(teacher_chat_id):
         return teacher_chat_id
 
     return DEFAULT_CHAT_ID
@@ -169,20 +178,19 @@ def detect_people(frame, known_embeddings, known_names, known_chat_ids, scale_x,
 
     for face in faces:
         name, chat_id = recognize(face.embedding, known_embeddings, known_names, known_chat_ids)
-        if name != UNKNOWN_NAME:
-            x1, y1, x2, y2 = face.bbox.astype(int)
-            box = (
-                int(x1 * scale_x),
-                int(y1 * scale_y),
-                int(x2 * scale_x),
-                int(y2 * scale_y),
-            )
-            kps = None
-            if hasattr(face, "kps") and face.kps is not None:
-                kps = face.kps.astype(np.float32).copy()
-                kps[:, 0] *= scale_x
-                kps[:, 1] *= scale_y
-            people.append((name, chat_id, box, kps))
+        x1, y1, x2, y2 = face.bbox.astype(int)
+        box = (
+            int(x1 * scale_x),
+            int(y1 * scale_y),
+            int(x2 * scale_x),
+            int(y2 * scale_y),
+        )
+        kps = None
+        if hasattr(face, "kps") and face.kps is not None:
+            kps = face.kps.astype(np.float32).copy()
+            kps[:, 0] *= scale_x
+            kps[:, 1] *= scale_y
+        people.append((name, chat_id, box, kps))
 
     return people   
 
@@ -332,6 +340,9 @@ def anti_spoof_passed(frame, box, kps, camera, name, now_ts):
         print(f"{name} blocked by anti-spoof: possible phone/screen rectangle")
         camera["liveness_states"].pop(name, None)
         return False
+
+    if not REQUIRE_LIVENESS_FOR_NOTIFICATION:
+        return True
 
     observations = update_liveness_state(camera["liveness_states"], name, box, kps, now_ts)
     if not liveness_passed(observations):
@@ -489,6 +500,9 @@ async def main_loop():
                         camera["people"] = people
 
                         for name, chat_id, box, kps in people:
+                            if name == UNKNOWN_NAME:
+                                continue
+
                             if not anti_spoof_passed(recognition_frame, box, kps, camera, name, recognition_ts):
                                 continue
 
@@ -531,13 +545,15 @@ async def main_loop():
 
                 for name, _, box, _ in camera["people"]:
                     x1, y1, x2, y2 = box
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                    label = f"{name} {camera['status']}"
-                    cv2.putText(frame, label, (x1, max(y1 - 8, 20)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    is_unknown = name == UNKNOWN_NAME
+                    color = (0, 0, 255) if is_unknown else (0, 255, 0)
+                    label = "not in database" if is_unknown else f"{name} {camera['status']}"
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                    cv2.putText(frame, label, (x1, max(y1 - 8, 20)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
                 cv2.putText(
                     frame,
-                    "Anti-spoof: turn head slightly left/right",
+                    "Known: green | Not in database: red",
                     (10, 25),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.6,
