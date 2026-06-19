@@ -150,12 +150,12 @@ async def api_attendance(class_name: str):
         return []
 
     formatted_logs = []
-    for row in logs:
+    for name, status, time in logs:
         # row: (name, event, time) экендигин базадан текшериңиз
         formatted_logs.append({
-            "name": row[0],
-            "event": row[1],
-            "time": row[2]
+            "name": name,
+            "event": status,
+            "time": time
         })
     return formatted_logs
 

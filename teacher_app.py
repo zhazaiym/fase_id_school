@@ -36,10 +36,12 @@ def main(page: ft.Page):
         if not attendance:
             attendance_list.controls.append(ft.Text("Бүгүн эч ким келген жок."))
         else:
-            for name, time in attendance:
+            for name, status, time in attendance:
+                color = "green" if status == "keldi" else "red"
+                icon = "✅" if status == "keldi" else "🚪"
                 attendance_list.controls.append(ft.Row([
                     ft.Text(name),
-                    ft.Text(f"✅ келди ({time})", color="green")
+                    ft.Text(f"{icon} {status} ({time})", color=color)
                 ]))
         page.update()
 

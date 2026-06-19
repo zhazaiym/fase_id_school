@@ -1,19 +1,16 @@
 import sqlite3
 from datetime import datetime
 
-import cursor
 import numpy as np
-from flet.controls import page
 
 
 DB_NAME = "school.db"
 
 
 def init_db():
-    conn = sqlite3.connect("school.db")  # Файл атын так жазыңыз
+    conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    # Таблица бар-жогун текшерип, болбосо түзөт
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS students (
             name TEXT PRIMARY KEY,
@@ -24,9 +21,24 @@ def init_db():
             parent_chat_id TEXT
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS attendance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            class_name TEXT,
+            status TEXT,
+            timestamp TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS teachers (
+            class_name TEXT PRIMARY KEY,
+            teacher_chat_id TEXT
+        )
+    """)
     conn.commit()
     conn.close()
-    print("✅ База текшерилди жана таблицалар түзүлдү.")
+    print("Database checked and tables are ready.")
 
 
 def load_all_students():
@@ -51,36 +63,37 @@ import sqlite3
 from datetime import datetime
 
 
-def log_attendance(name, class_name):
-    conn = sqlite3.connect("school.db")
+def has_attendance_today(name, status):
+    conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
 
-    # Бүгүнкү күндү алабыз (YYYY-MM-DD)
     today = datetime.now().strftime("%Y-%m-%d")
-
-    # 1. Окуучу бүгүн "келди" деп катталганбы текшеребиз
-    # Эгер базада ошол ат менен жана бүгүнкү күндө жазуу болсо, кайра жазбайбыз
     cur.execute("""
-        SELECT id FROM attendance 
-        WHERE name = ? AND status = 'келди' AND date(timestamp) = ? 
+        SELECT id
+        FROM attendance
+        WHERE name = ? AND status = ? AND date(timestamp) = ?
         LIMIT 1
-    """, (name, today))
+    """, (name, status, today))
 
-    already_exists = cur.fetchone()
+    exists = cur.fetchone() is not None
+    conn.close()
+    return exists
 
-    # 2. Эгер мурунтан катталган болсо, эч нерсе кылбайбыз
-    if already_exists:
-        conn.close()
-        return False  # Бул жерде "катталган" деген белги
 
-    # 3. Эгер жаңы болсо, базага жазабыз
-    timestamp = datetime.now().strftime("%H:%M")
+def log_attendance(name, class_name, status="keldi"):
+    if has_attendance_today(name, status):
+        return False
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cur.execute("INSERT INTO attendance (name, class_name, status, timestamp) VALUES (?, ?, ?, ?)",
-                (name, class_name, 'келди', timestamp))
+                (name, class_name, status, timestamp))
 
     conn.commit()
     conn.close()
-    return True  # Бул жерде "жаңы катталды" деген белги
+    return True
 
 def get_teacher_chat_id(class_name):
     conn = sqlite3.connect(DB_NAME)
@@ -102,10 +115,14 @@ def get_students_by_class(class_name):
     return data
 
 def get_class_attendance(class_name):
-    conn = sqlite3.connect("school.db")
+    conn = sqlite3.connect(DB_NAME)
     cur = conn.cursor()
-    # Келүү тарыхын алуу
-    cur.execute("SELECT name, timestamp FROM attendance WHERE class_name = ? ORDER BY timestamp DESC", (class_name.strip(),))
+    cur.execute("""
+        SELECT name, status, strftime('%H:%M', timestamp)
+        FROM attendance
+        WHERE class_name = ?
+        ORDER BY timestamp DESC
+    """, (class_name.strip(),))
     data = cur.fetchall()
     conn.close()
     return data
