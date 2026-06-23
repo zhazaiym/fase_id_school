@@ -1,4 +1,9 @@
-﻿import flet as ft
+from __future__ import annotations
+
+try:
+    import flet as ft
+except ModuleNotFoundError:
+    ft = None
 import requests
 
 from database import get_class_attendance, get_students_by_class
@@ -69,4 +74,7 @@ def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    ft.run(main)
+    if ft is None:
+        print("Flet is not installed. Install it with: pip install flet")
+    else:
+        ft.run(main)

@@ -168,6 +168,13 @@ async def parent_page(name: str = Query(""), code: str = Query("")):
     return page("Кабинет родителя", parent_report_view(rows))
 
 
+@app.post("/api/login")
+async def api_login(class_name: str = Form(...), password: str = Form(...)):
+    if password.strip() == "1234":
+        return {"status": "success", "class_name": class_name.strip()}
+    return {"status": "error", "message": "Пароль туура эмес"}
+
+
 @app.get("/api/attendance/{class_name}")
 async def api_attendance(class_name: str):
     from database import get_class_attendance

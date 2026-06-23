@@ -125,7 +125,7 @@ def get_face_app():
                 allowed_modules=["detection", "recognition"],
                 providers=["CPUExecutionProvider"],
             )
-            face_app.prepare(ctx_id=0, det_size=(256, 256))
+            face_app.prepare(ctx_id=0, det_size=(640, 640))
     return face_app
 
 
@@ -158,13 +158,15 @@ def load_known_faces(force=False):
     return known_cache
 
 
-def recognize_face(embedding, known, threshold=0.42):
+def recognize_face(embedding, known, threshold=0.45, margin=0.03):
     if len(known["embeddings"]) == 0:
         return UNKNOWN_NAME, "", ""
 
     scores = known["embeddings"] @ normalize_embedding(embedding)
     best_idx = int(np.argmax(scores))
-    if float(scores[best_idx]) >= threshold:
+    best_score = float(scores[best_idx])
+    second_score = float(np.partition(scores, -2)[-2]) if len(scores) > 1 else -1.0
+    if best_score >= threshold and (len(scores) == 1 or best_score - second_score >= margin):
         return known["names"][best_idx], known["parent_codes"][best_idx], known["classes"][best_idx]
     return UNKNOWN_NAME, "", ""
 
@@ -176,6 +178,20 @@ def resize_for_recognition(frame):
     scale = RECOGNITION_WIDTH / width
     resized = cv2.resize(frame, (RECOGNITION_WIDTH, int(height * scale)))
     return resized, width / resized.shape[1], height / resized.shape[0]
+
+
+def enhance_low_light_frame(frame):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    if float(np.mean(gray)) >= 95:
+        return frame
+
+    lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+    l_channel, a_channel, b_channel = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced_l = clahe.apply(l_channel)
+    enhanced = cv2.merge((enhanced_l, a_channel, b_channel))
+    enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+    return cv2.convertScaleAbs(enhanced, alpha=1.15, beta=12)
 
 
 def clamp_box(box, frame_shape):
@@ -196,64 +212,6 @@ def expand_box(box, frame_shape, scale=0.7):
     pad_x = int(width * scale)
     pad_y = int(height * scale)
     return clamp_box((x1 - pad_x, y1 - pad_y, x2 + pad_x, y2 + pad_y), frame_shape)
-
-
-def face_crop_quality_ok(frame, box):
-    x1, y1, x2, y2 = clamp_box(box, frame.shape)
-    if x2 <= x1 or y2 <= y1:
-        return False
-
-    crop = frame[y1:y2, x1:x2]
-    if crop.size == 0:
-        return False
-
-    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-    brightness = float(np.mean(gray))
-    contrast = float(np.std(gray))
-    sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-    return 35 <= brightness <= 235 and contrast >= 18 and sharpness >= 12
-
-
-def likely_screen_spoof(frame, box):
-    x1, y1, x2, y2 = box
-    face_area = max(1, (x2 - x1) * (y2 - y1))
-    ex1, ey1, ex2, ey2 = expand_box(box, frame.shape, scale=1.0)
-    regions = [(frame[ey1:ey2, ex1:ex2], ex1, ey1), (frame, 0, 0)]
-
-    for region, offset_x, offset_y in regions:
-        if region.size == 0:
-            continue
-
-        gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(gray, 60, 160)
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        face_center_x = ((x1 + x2) / 2) - offset_x
-        face_center_y = ((y1 + y2) / 2) - offset_y
-
-        for contour in contours:
-            perimeter = cv2.arcLength(contour, True)
-            if perimeter < 120:
-                continue
-
-            approx = cv2.approxPolyDP(contour, 0.04 * perimeter, True)
-            if len(approx) != 4 or not cv2.isContourConvex(approx):
-                continue
-
-            rx, ry, rw, rh = cv2.boundingRect(approx)
-            rectangle_area = rw * rh
-            aspect = rw / max(1, rh)
-            contains_face_center = rx <= face_center_x <= rx + rw and ry <= face_center_y <= ry + rh
-
-            if contains_face_center and 0.35 <= aspect <= 2.9 and rectangle_area > face_area * 1.5:
-                return True
-
-    return False
-
-
-def anti_spoof_passed(frame, box):
-    return face_crop_quality_ok(frame, box)
 
 
 def get_camera_stream(index):
@@ -298,7 +256,7 @@ def rect_to_box(rect):
 def build_tracks(frame, people):
     detected_at = time.time()
     tracks = []
-    for name, class_name, box, is_live in people:
+    for name, class_name, box in people:
         track_box = expand_box(box, frame.shape, scale=0.25)
         tracker = create_fast_tracker()
         if tracker is not None:
@@ -311,7 +269,6 @@ def build_tracks(frame, people):
             "name": name,
             "class_name": class_name,
             "box": track_box,
-            "is_live": is_live,
             "detected_at": detected_at,
             "tracker": tracker,
             "misses": 0,
@@ -404,16 +361,17 @@ def recognize_frame(frame, status):
     small_frame, scale_x, scale_y = resize_for_recognition(frame)
     with face_inference_lock:
         faces = get_face_app().get(small_frame)
+        if not faces:
+            faces = get_face_app().get(enhance_low_light_frame(small_frame))
     people = []
 
     for face in faces:
         name, parent_code, class_name = recognize_face(face.embedding, known)
         x1, y1, x2, y2 = face.bbox.astype(int)
         box = (int(x1 * scale_x), int(y1 * scale_y), int(x2 * scale_x), int(y2 * scale_y))
-        is_live = True if name == UNKNOWN_NAME else anti_spoof_passed(frame, box)
-        people.append((name, class_name, box, is_live))
+        people.append((name, class_name, box))
 
-        if is_live and name != UNKNOWN_NAME and log_attendance(name, class_name, status):
+        if name != UNKNOWN_NAME and log_attendance(name, class_name, status):
             photo_path = os.path.join(SCREENSHOTS_DIR, f"{name}_{status}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg")
             cv2.imwrite(photo_path, frame)
 

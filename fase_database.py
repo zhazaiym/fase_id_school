@@ -1,53 +1,54 @@
-import cv2
-import pickle
 import os
-import sqlite3
+
+import cv2
 from insightface.app import FaceAnalysis
+
 from database import init_db, save_student
+from settings import FACE_DIR
 
-# Базаны текшерип, түзүп алабыз
-init_db()
 
-app = FaceAnalysis(providers=['CPUExecutionProvider'])
-app.prepare(ctx_id=0, det_size=(640, 640))
+def import_photos_to_database(face_db_path=FACE_DIR, default_class="4_a"):
+    init_db()
 
-FACE_DB_PATH = "face_database/"
-count = 0
+    app = FaceAnalysis(providers=["CPUExecutionProvider"])
+    app.prepare(ctx_id=0, det_size=(640, 640))
 
-print("🔄 Папкадагы сүрөттөрдү маалымат базасына (`school.db`) жүктөө башталды...")
+    count = 0
+    print(f"Loading photos from {face_db_path} into school.db...")
 
-# Папканы толук кыдыруу
-for root, dirs, files in os.walk(FACE_DB_PATH):
-    for filename in files:
-        if filename.endswith(('.jpg', '.png', '.jpeg')):
-            # Окуучунун атын сүрөттүн өзүнөн алабыз
+    for root, _, files in os.walk(face_db_path):
+        for filename in files:
+            if not filename.lower().endswith((".jpg", ".jpeg", ".png")):
+                continue
+
             name = os.path.splitext(filename)[0].strip().replace(" ", "_")
-
-            # Класстын атын папканын атынан алабыз.
-            # Эгер түз эле face_database ичинде болсо, "Белгисиз класс" деп жазат
             folder_name = os.path.basename(root)
-            class_name = folder_name if folder_name != "face_database" else "4_a"  # Демейки класс
-
+            class_name = folder_name if folder_name != os.path.basename(face_db_path) else default_class
             photo_path = os.path.join(root, filename)
             img = cv2.imread(photo_path)
 
             if img is None:
-                print(f"❌ {filename} окулбады")
+                print(f"Skip {filename}: cannot read image")
                 continue
 
             faces = app.get(img)
-            if len(faces) > 0:
-                # database.py файлындагы функция аркылуу түз эле SQLite базага сактайбыз
-                save_student(
-                    name=name,
-                    class_name=class_name,
-                    parent_code_input="Катталган эмес",
-                    photo_path=photo_path,
-                    embedding=faces[0].embedding
-                )
-                print(f"✅ {name} ({class_name}-класс) базага ийгиликтүү кошулду.")
-                count += 1
-            else:
-                print(f"⚠️ {filename} — сүрөттөн жүз табылган жок!")
+            if not faces:
+                print(f"Skip {filename}: face not found")
+                continue
 
-print(f"\n🎉 Бүттү! Жалпысынан {count} окуучу `school.db` базасына киргизилди.")
+            save_student(
+                name=name,
+                class_name=class_name,
+                parent_code_input="",
+                photo_path=photo_path.replace("\\", "/"),
+                embedding=faces[0].embedding,
+            )
+            print(f"Added {name} ({class_name})")
+            count += 1
+
+    print(f"Done. Added {count} students.")
+    return count
+
+
+if __name__ == "__main__":
+    import_photos_to_database()
