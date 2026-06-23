@@ -13,7 +13,7 @@ def test_database():
 
         # Класс боюнча издеп көрөбүз
         class_to_test = "10 b"  # Бул жерге өзүңүз кирип жаткан классты жазыңыз
-        cursor.execute("SELECT name, chat_id FROM students WHERE class_name = ?", (class_to_test,))
+        cursor.execute("SELECT name, parent_code FROM students WHERE class_name = ?", (class_to_test,))
         students = cursor.fetchall()
         print(f"'{class_to_test}' классындагы окуучулар:", students)
 

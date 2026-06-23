@@ -41,7 +41,7 @@ for root, dirs, files in os.walk(FACE_DB_PATH):
                 save_student(
                     name=name,
                     class_name=class_name,
-                    parent_chat_id="Катталган эмес",
+                    parent_code_input="Катталган эмес",
                     photo_path=photo_path,
                     embedding=faces[0].embedding
                 )

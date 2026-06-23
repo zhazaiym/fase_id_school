@@ -1,20 +1,33 @@
-import os
-import cv2
+﻿import os
 import shutil
+import socket
+import cv2
 import uvicorn
-from database import init_db
-
-# Программа ишке кирээри менен таблицаларды түзөт
-init_db()
-from fastapi import FastAPI, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, File, Form, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from insightface.app import FaceAnalysis
-from database import init_db, save_student, get_all_students_list, delete_student_by_name, get_class_attendance
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
-app = FastAPI()
+from camera_service import camera_frames, get_face_app, load_known_faces
+from database import delete_student_by_name, get_parent_report, init_db, save_student
+from settings import CAMERA_INDEXES, FACE_DIR, SCREENSHOTS_DIR
+from views import (
+    esc,
+    home_view,
+    list_view,
+    page,
+    parent_login_view,
+    parent_report_view,
+    students_view,
+)
 
+
+init_db()
+os.makedirs(FACE_DIR, exist_ok=True)
+os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
+os.makedirs("static", exist_ok=True)
+
+app = FastAPI(title="School Face ID")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -22,143 +35,151 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-face_app = FaceAnalysis(providers=['CPUExecutionProvider'])
-face_app.prepare(ctx_id=0, det_size=(640, 640))
-
-os.makedirs("face_database", exist_ok=True)
-app.mount("/face_database", StaticFiles(directory="face_database"), name="face_database")
+app.mount("/face_database", StaticFiles(directory=FACE_DIR), name="face_database")
+app.mount("/screenshots", StaticFiles(directory=SCREENSHOTS_DIR), name="screenshots")
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
-# admin_panel.py ичиндеги generate_students_html функциясын ушундай кылып өзгөртүңүз:
-def generate_students_html():
-    students = get_all_students_list()  # Базадан (name, class_name, photo_path, parent_chat_id) келиши керек
-    rows = ""
-    for student in students:
-        # Эгер базадан 3 эле нерсе келип жатса, бул жерди оңдоңуз
-        # Сиздин database.py функцияңыз эмнени SELECT кылып жатканы маанилүү
-        name, class_name, photo_path, parent_id = student
-
-        rows += f"""
-        <tr>
-            <td><img src="{photo_path}" width="50"></td>
-            <td>{name}</td>
-            <td>{class_name}</td>
-            <td>{parent_id}</td>
-            <td><a href="/delete/{name}" style="color:red;">Өчүрүү</a></td>
-        </tr>
-        """
-    return rows
+def find_free_port(start_port=8000, attempts=20):
+    for port in range(start_port, start_port + attempts):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    raise RuntimeError("No free port found for the web site")
 
 
-# Бул функцияны өчүрүү маршруту катары кошуңуз
-@app.get("/delete/{name}")
-async def delete_student(name: str):
-    # database.py ичиндеги функцияны чакырабыз
-    delete_student_by_name(name)
-
-    # Сүрөт файлын да өчүрүп койгон туура (милдеттүү эмес, бирок жакшы)
-    photo_path = f"face_database/{name}.jpg"
-    if os.path.exists(photo_path):
-        os.remove(photo_path)
-
-    # Өчүрүлгөндөн кийин башкы бетке кайтарабыз
-    return RedirectResponse(url="/", status_code=303)
+def safe_filename(name):
+    cleaned = "".join(ch for ch in name.strip().replace(" ", "_") if ch.isalnum() or ch in "_-")
+    return cleaned or "student"
 
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
-    students_table = generate_students_html()
-    return f"""
-    <html>
-    <head><meta charset="UTF-8"><title>Мектеп Администрациясы</title></head>
-    <body style="font-family: Arial; max-width: 800px; margin: 30px auto; padding: 20px;">
-        <div style="border: 1px solid #ccc; border-radius: 10px; padding: 20px; max-width: 400px; margin: 0 auto 30px auto;">
-            <h2>🏫 Жаңы окуучу каттоо</h2>
-            <form action="/add" method="post" enctype="multipart/form-data">
-                <input name="name" placeholder="Окуучунун аты" style="width:100%; padding:8px; margin:10px 0;" required><br>
-                <input name="class_name" placeholder="Классы (Мисалы: 11 m)" style="width:100%; padding:8px; margin:10px 0;" required><br>
-                <input type="file" name="photo" accept="image/*" style="margin:10px 0;" required><br><br>
-                <button type="submit" style="width:100%; padding:10px; background:#28a745; color:white; border:none; border-radius:5px; cursor:pointer;">✅ Базага кошуу</button>
-            </form>
-        </div>
-        <hr style="border: 0; border-top: 2px solid #eee; margin: 40px 0;">
-        <h2>👥 Катталган бардык окуучулар тизмеси</h2>
-        <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
-            <thead style="background: #f2f2f2;">
-                <tr><th>Сүрөтү</th><th>Аты-жөнү</th><th>Классы</th><th>Ата-эне ID</th><th>Аракет</th></tr>
-            </thead>
-            <tbody>{students_table if students_table else "<tr><td colspan='5' style='text-align:center;'>Тизме бош</td></tr>"}</tbody>
-        </table>
-    </body>
-    </html>
-    """
+    return page("School Face ID", home_view())
+
+
+@app.get("/list", response_class=HTMLResponse)
+async def list_page():
+    return page("List / Общий отчет", list_view())
+
+
+@app.get("/students", response_class=HTMLResponse)
+async def students_page():
+    return page("Ученики", students_view())
 
 
 @app.post("/add")
 async def add_student(
-        name: str = Form(...),
-        class_name: str = Form(...),
-        photo: UploadFile = File(...)
+    name: str = Form(...),
+    class_name: str = Form(...),
+    parent_name: str = Form(...),
+    parent_code: str = Form(...),
+    photo: UploadFile = File(...),
 ):
-    # 1. Окуучунун атын файл аты үчүн тазалайбыз
-    safe_name = name.strip().replace(" ", "_")
-    photo_path = f"face_database/{safe_name}.jpg"
+    safe_name = safe_filename(name)
+    photo_path = os.path.join(FACE_DIR, f"{safe_name}.jpg")
 
-    # 2. Сүрөттү сактайбыз
-    with open(photo_path, "wb") as f:
-        shutil.copyfileobj(photo.file, f)
+    with open(photo_path, "wb") as file:
+        shutil.copyfileobj(photo.file, file)
 
-    # 3. Жүздү таануу
     img = cv2.imread(photo_path)
-    faces = face_app.get(img)
-
-    if len(faces) == 0:
-        # Эгер жүз табылбаса, сүрөттү өчүрүп ката көрсөтөбүз
+    faces = get_face_app().get(img) if img is not None else []
+    if not faces:
         if os.path.exists(photo_path):
             os.remove(photo_path)
-        return HTMLResponse("<h3>❌ Жүз таанылган жок! Сураныч, жүзүңүз даана көрүнгөн сүрөт жүктөңүз.</h3>")
+        return HTMLResponse(page("Ошибка", """
+            <h1>Лицо не найдено</h1>
+            <p>Загрузите фото, где лицо ученика видно ясно.</p>
+            <a class="btn light" href="/students">Назад</a>
+        """), status_code=400)
 
-    # 4. ӨЗ ID'ңизди ушул жерге жазыңыз
-    MY_ID = "1639133042"
+    save_student(
+        safe_name,
+        class_name.strip(),
+        parent_code.strip(),
+        photo_path.replace("\\", "/"),
+        faces[0].embedding,
+        parent_name=parent_name,
+        parent_code=parent_code,
+    )
+    load_known_faces(force=True)
+    return RedirectResponse(url="/students", status_code=303)
 
-    # 5. Базага сактоо
-    # Эскертүү: save_student функциясы database.py'де 5 аргумент кабыл алышы керек!
-    save_student(safe_name, class_name.strip(), MY_ID, photo_path, faces[0].embedding)
 
-    # 6. Бетти жаңыртуу үчүн башкы бетке кайтарабыз
-    return RedirectResponse(url="/", status_code=303)
+@app.get("/delete/{name}")
+async def delete_student(name: str):
+    delete_student_by_name(name)
+    photo_path = os.path.join(FACE_DIR, f"{safe_filename(name)}.jpg")
+    if os.path.exists(photo_path):
+        os.remove(photo_path)
+    load_known_faces(force=True)
+    return RedirectResponse(url="/students", status_code=303)
 
 
-# --- 🔐 МУГАЛИМДЕР ҮЧҮН API ТАРМАКТАРЫ ---
+@app.get("/camera", response_class=HTMLResponse)
+async def camera_page():
+    return page("Камера", f"""
+        <div class="camera-page">
+            <div class="camera-tile">
+                <img class="camera" src="/camera_feed?status=keldi&camera_index={CAMERA_INDEXES['keldi']}" alt="Камера входа">
+            </div>
+            <div class="camera-tile">
+                <img class="camera" src="/camera_feed?status=ketti&camera_index={CAMERA_INDEXES['ketti']}" alt="Камера выхода">
+            </div>
+        </div>
+    """)
 
-@app.post("/api/login")
-async def api_login(class_name: str = Form(...), password: str = Form(...)):
-    # Каалаган класс "1234" паролу менен кире алат
-    if password.strip() == "1234":
-        return {"status": "success", "class_name": class_name.strip()}
-    return {"status": "error", "message": "Пароль туура эмес!"}
+
+@app.get("/camera_feed")
+async def camera_feed(status: str = Query("keldi"), camera_index: int = Query(None)):
+    status = "ketti" if status == "ketti" else "keldi"
+    allowed_index = CAMERA_INDEXES[status]
+    if camera_index is None or camera_index != allowed_index:
+        camera_index = allowed_index
+    return StreamingResponse(
+        camera_frames(status, camera_index),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
+
+
+@app.get("/parent", response_class=HTMLResponse)
+async def parent_page(name: str = Query(""), code: str = Query("")):
+    if not name.strip() or not code.strip():
+        return page("Кабинет родителя", parent_login_view(name, code))
+
+    rows = []
+    for student_name, class_name, status, timestamp in get_parent_report(code, name):
+        status_text = "Отчета нет" if not status else ("Пришел" if status == "keldi" else "Ушел")
+        rows.append(f"""
+        <tr>
+            <td>{esc(student_name)}</td>
+            <td>{esc(class_name)}</td>
+            <td>{esc(status_text)}</td>
+            <td>{esc(timestamp or '')}</td>
+        </tr>
+        """)
+    if not rows:
+        rows.append("<tr><td colspan='4' class='muted'>По этому коду ученики не найдены</td></tr>")
+
+    return page("Кабинет родителя", parent_report_view(rows))
 
 
 @app.get("/api/attendance/{class_name}")
 async def api_attendance(class_name: str):
-    # Базадан маалыматты алуу
-    logs = get_class_attendance(class_name.strip())
+    from database import get_class_attendance
 
-    # Эгер логдор бош болсо, анда дароо бош тизме кайтарабыз
-    if not logs:
-        return []
+    return [
+        {"name": name, "event": status, "time": time_text}
+        for name, status, time_text in get_class_attendance(class_name)
+    ]
 
-    formatted_logs = []
-    for name, status, time in logs:
-        # row: (name, event, time) экендигин базадан текшериңиз
-        formatted_logs.append({
-            "name": name,
-            "event": status,
-            "time": time
-        })
-    return formatted_logs
 
 if __name__ == "__main__":
     init_db()
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    port = find_free_port(8000)
+    print(f"Open site: http://127.0.0.1:{port}")
+    uvicorn.run(app, host="127.0.0.1", port=port)

@@ -1,0 +1,14 @@
+FACE_DIR = "face_database"
+SCREENSHOTS_DIR = "screenshots"
+
+UNKNOWN_NAME = "не в базе"
+RECOGNITION_WIDTH = 256
+RECOGNITION_INTERVAL_SECONDS = 0.1
+CAMERA_FPS = 30
+CAMERA_READ_SLEEP_SECONDS = 0.001
+JPEG_QUALITY = 60
+
+CAMERA_INDEXES = {
+    "keldi": 0,
+    "ketti": 1,
+}
