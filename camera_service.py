@@ -469,3 +469,4 @@ def camera_frames(status, camera_index):
         if ok:
             yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
         time.sleep(max(0.001, 1 / max(1, CAMERA_FPS)))
+
