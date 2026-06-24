@@ -5,7 +5,7 @@ import cv2
 import uvicorn
 from fastapi import FastAPI, File, Form, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from camera_service import camera_frames, get_face_app, load_known_faces
@@ -43,13 +43,21 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 def find_free_port(start_port=8000, attempts=20):
     for port in range(start_port, start_port + attempts):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
-                sock.bind(("127.0.0.1", port))
+                sock.bind(("0.0.0.0", port))
                 return port
             except OSError:
                 continue
     raise RuntimeError("No free port found for the web site")
+
+
+def get_lan_ip():
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("192.168.0.1", 80))
+            return sock.getsockname()[0]
+    except OSError:
+        return "192.168.0.179"
 
 
 def safe_filename(name):
@@ -60,6 +68,11 @@ def safe_filename(name):
 @app.get("/", response_class=HTMLResponse)
 async def home():
     return page("School Face ID", home_view())
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    return Response(status_code=204)
 
 
 @app.get("/list", response_class=HTMLResponse)
@@ -194,5 +207,7 @@ async def api_attendance(class_name: str):
 if __name__ == "__main__":
     init_db()
     port = find_free_port(8000)
-    print(f"Open site: http://127.0.0.1:{port}")
-    uvicorn.run(app, host="127.0.0.1", port=port)
+    lan_ip = get_lan_ip()
+    print(f"Open on this computer: http://127.0.0.1:{port}")
+    print(f"Open from phone on same Wi-Fi: http://{lan_ip}:{port}")
+    uvicorn.run(app, host="0.0.0.0", port=port)
