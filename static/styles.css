@@ -26,6 +26,8 @@ h2 { margin: 26px 0 12px; font-size: 20px; }
 a { color: var(--blue); text-decoration: none; }
 
 .top { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 22px; }
+.inline-form { display: inline-block; margin: 0; }
+.clear-attendance-form { margin-bottom: 12px; }
 .btn {
     display: inline-block;
     border: 0;

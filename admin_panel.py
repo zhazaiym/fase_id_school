@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from camera_service import camera_frames, get_face_app, load_known_faces
-from database import delete_student_by_name, get_parent_report, init_db, save_student
+from database import clear_attendance, delete_student_by_name, get_parent_report, init_db, save_student
 from settings import CAMERA_INDEXES, FACE_DIR, SCREENSHOTS_DIR
 from views import (
     esc,
@@ -65,6 +65,12 @@ async def home():
 @app.get("/list", response_class=HTMLResponse)
 async def list_page():
     return page("List / Общий отчет", list_view())
+
+
+@app.post("/clear-attendance")
+async def clear_attendance_log():
+    clear_attendance()
+    return RedirectResponse(url="/list", status_code=303)
 
 
 @app.get("/students", response_class=HTMLResponse)

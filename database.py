@@ -138,6 +138,15 @@ def delete_student_by_name(name):
     conn.close()
 
 
+def clear_attendance():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM attendance")
+    cur.execute("DELETE FROM sqlite_sequence WHERE name = 'attendance'")
+    conn.commit()
+    conn.close()
+
+
 def has_attendance_today(name, status):
     conn = get_connection()
     cur = conn.cursor()
@@ -154,9 +163,6 @@ def has_attendance_today(name, status):
 
 
 def log_attendance(name, class_name, status="keldi"):
-    if has_attendance_today(name, status):
-        return False
-
     conn = get_connection()
     cur = conn.cursor()
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

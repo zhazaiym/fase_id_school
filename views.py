@@ -153,6 +153,9 @@ def home_view():
 
 def list_view():
     return """
+        <form class="inline-form clear-attendance-form" action="/clear-attendance" method="post" onsubmit="return confirm('Ochistka: kelgen/ketken jurnalyn ochurobuzbu?')">
+            <button class="btn red" type="submit">Очистка</button>
+        </form>
         <div class="top">
             <a class="btn light" href="/">Назад</a>
             <a class="btn" href="/camera">Камера</a>
