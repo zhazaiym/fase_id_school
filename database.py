@@ -1,10 +1,12 @@
 import sqlite3
+import threading
 from datetime import datetime
 
 import numpy as np
 
 
 DB_NAME = "school.db"
+attendance_lock = threading.Lock()
 
 
 def get_connection():
@@ -162,31 +164,69 @@ def has_attendance_today(name, status):
     return exists
 
 
-def log_attendance(name, class_name, status="keldi"):
-    conn = get_connection()
-    cur = conn.cursor()
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cur.execute("""
-        INSERT INTO attendance (name, class_name, status, timestamp)
-        VALUES (?, ?, ?, ?)
-    """, (name, class_name, status, timestamp))
-    conn.commit()
-    conn.close()
+def is_status_change(row, last_status_by_name_and_day, name_index, status_index, timestamp_index):
+    name = row[name_index]
+    status = row[status_index]
+    day = str(row[timestamp_index] or "")[:10]
+    key = (name, day)
+    if last_status_by_name_and_day.get(key) == status:
+        return False
+    last_status_by_name_and_day[key] = status
     return True
+
+
+def log_attendance(name, class_name, status="keldi"):
+    if status not in {"keldi", "ketti"}:
+        return False
+
+    with attendance_lock:
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute("BEGIN IMMEDIATE")
+            today = datetime.now().strftime("%Y-%m-%d")
+            cur.execute("""
+                SELECT status
+                FROM attendance
+                WHERE name = ? AND date(timestamp) = ?
+                ORDER BY timestamp DESC, id DESC
+                LIMIT 1
+            """, (name, today))
+            row = cur.fetchone()
+            last_status = row[0] if row else None
+
+            if last_status == status or (last_status is None and status == "ketti"):
+                conn.rollback()
+                return False
+
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            cur.execute("""
+                INSERT INTO attendance (name, class_name, status, timestamp)
+                VALUES (?, ?, ?, ?)
+            """, (name, class_name, status, timestamp))
+            conn.commit()
+            return True
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
 
 def get_class_attendance(class_name):
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("""
-        SELECT name, status, strftime('%H:%M', timestamp)
+        SELECT name, status, strftime('%H:%M', timestamp), timestamp
         FROM attendance
         WHERE class_name = ?
-        ORDER BY timestamp DESC
+        ORDER BY timestamp ASC, id ASC
     """, (class_name.strip(),))
-    data = cur.fetchall()
+    rows = cur.fetchall()
     conn.close()
-    return data
+    last_status = {}
+    data = [row[:3] for row in rows if is_status_change(row, last_status, 0, 1, 3)]
+    return list(reversed(data))
 
 
 def get_recent_attendance(limit=50):
@@ -196,12 +236,13 @@ def get_recent_attendance(limit=50):
         SELECT a.name, a.class_name, a.status, a.timestamp, s.parent_name, s.parent_code
         FROM attendance a
         LEFT JOIN students s ON s.name = a.name
-        ORDER BY a.timestamp DESC
-        LIMIT ?
-    """, (limit,))
-    data = cur.fetchall()
+        ORDER BY a.timestamp ASC, a.id ASC
+    """)
+    rows = cur.fetchall()
     conn.close()
-    return data
+    last_status = {}
+    data = [row for row in rows if is_status_change(row, last_status, 0, 2, 3)]
+    return list(reversed(data))[:limit]
 
 
 def get_parent_report(parent_code, parent_name=""):
@@ -219,8 +260,13 @@ def get_parent_report(parent_code, parent_name=""):
         FROM students s
         LEFT JOIN attendance a ON a.name = s.name
         WHERE s.parent_code = ? AND lower(trim(s.parent_name)) = lower(trim(?))
-        ORDER BY s.name, a.timestamp DESC
+        ORDER BY s.name, a.timestamp ASC, a.id ASC
     """, (parent_code, parent_name))
-    data = cur.fetchall()
+    rows = cur.fetchall()
     conn.close()
-    return data
+    last_status = {}
+    data = [
+        row for row in rows
+        if row[2] is None or is_status_change(row, last_status, 0, 2, 3)
+    ]
+    return sorted(data, key=lambda row: (row[0], row[3] or ""), reverse=True)
