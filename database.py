@@ -117,6 +117,66 @@ def get_all_students_list():
     return data
 
 
+def get_student_by_name(name):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT name, class_name, photo_path, parent_name, parent_code, embedding
+        FROM students
+        WHERE name = ?
+    """, (name,))
+    data = cur.fetchone()
+    conn.close()
+    return data
+
+
+def update_student(old_name, name, class_name, parent_name, parent_code, photo_path=None, embedding=None):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    if old_name != name:
+        cur.execute("SELECT 1 FROM students WHERE name = ?", (name,))
+        if cur.fetchone() is not None:
+            conn.close()
+            return False
+
+    fields = [
+        "name = ?",
+        "class_name = ?",
+        "parent_name = ?",
+        "parent_code = ?",
+    ]
+    values = [name, class_name, parent_name, parent_code]
+
+    if photo_path is not None and embedding is not None:
+        fields.extend(["photo_path = ?", "embedding = ?"])
+        values.extend([photo_path, embedding.astype(np.float32).tobytes()])
+
+    values.append(old_name)
+    cur.execute(f"""
+        UPDATE students
+        SET {", ".join(fields)}
+        WHERE name = ?
+    """, values)
+    changed = cur.rowcount > 0
+
+    cur.execute("""
+        UPDATE attendance
+        SET name = ?, class_name = ?
+        WHERE name = ?
+    """, (name, class_name, old_name))
+
+    if parent_code:
+        cur.execute("""
+            INSERT OR REPLACE INTO parents (code, name, role)
+            VALUES (?, ?, 'parent')
+        """, (parent_code, parent_name))
+
+    conn.commit()
+    conn.close()
+    return changed
+
+
 def get_students_by_class(class_name):
     conn = get_connection()
     cur = conn.cursor()

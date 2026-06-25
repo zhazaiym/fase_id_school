@@ -38,7 +38,10 @@ def students_rows():
             <td>{esc(class_name)}</td>
             <td>{esc(parent_name)}</td>
             <td>{esc(parent_code)}</td>
-            <td><a class="btn red" href="/delete/{url_value(name)}">Удалить</a></td>
+            <td class="actions">
+                <a class="btn light" href="/edit/{url_value(name)}">Изменить</a>
+                <a class="btn red" href="/delete/{url_value(name)}">Удалить</a>
+            </td>
         </tr>
         """)
     if not rows:
@@ -197,6 +200,36 @@ def students_view():
             <thead><tr><th>Фото</th><th>Имя</th><th>Класс</th><th>Родитель</th><th>Код</th><th>Действие</th></tr></thead>
             <tbody>""" + students_rows() + """</tbody>
         </table>
+    """
+
+
+def edit_student_view(student):
+    name, class_name, photo_path, parent_name, parent_code, _ = student
+    return f"""
+        <div class="top">
+            <a class="btn light" href="/students">Назад</a>
+            <a class="btn" href="/camera">Камера</a>
+        </div>
+        <h1>Изменить ученика</h1>
+        <div class="panel">
+            <form action="/edit/{url_value(name)}" method="post" enctype="multipart/form-data">
+                <label>Имя ученика</label>
+                <input name="name" value="{esc(name)}" required>
+                <label>Класс</label>
+                <input name="class_name" value="{esc(class_name)}" required>
+                <label>Родитель</label>
+                <input name="parent_name" value="{esc(parent_name)}" required>
+                <label>Код родителя для входа</label>
+                <input name="parent_code" value="{esc(parent_code)}" required>
+                <label>Новое фото ученика</label>
+                <input type="file" name="photo" accept="image/*">
+                <div class="edit-photo">
+                    <img class="photo" src="/{esc(photo_path)}" alt="">
+                    <span class="muted">Если фото не выбрать, останется старое.</span>
+                </div>
+                <button class="btn green" type="submit">Сохранить</button>
+            </form>
+        </div>
     """
 
 

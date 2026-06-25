@@ -1,6 +1,7 @@
 ﻿import os
 import shutil
 import socket
+from typing import Optional
 import cv2
 import uvicorn
 from fastapi import FastAPI, File, Form, Query, UploadFile
@@ -9,9 +10,18 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response, Streamin
 from fastapi.staticfiles import StaticFiles
 
 from camera_service import camera_frames, get_face_app, load_known_faces
-from database import clear_attendance, delete_student_by_name, get_parent_report, init_db, save_student
+from database import (
+    clear_attendance,
+    delete_student_by_name,
+    get_parent_report,
+    get_student_by_name,
+    init_db,
+    save_student,
+    update_student,
+)
 from settings import CAMERA_INDEXES, FACE_DIR, SCREENSHOTS_DIR
 from views import (
+    edit_student_view,
     esc,
     home_view,
     list_view,
@@ -91,6 +101,75 @@ async def students_page():
     return page("Ученики", students_view())
 
 
+@app.get("/edit/{name}", response_class=HTMLResponse)
+async def edit_student_page(name: str):
+    student = get_student_by_name(name)
+    if student is None:
+        return HTMLResponse(page("Ошибка", """
+            <h1>Ученик не найден</h1>
+            <a class="btn light" href="/students">Назад</a>
+        """), status_code=404)
+    return page("Изменить ученика", edit_student_view(student))
+
+
+@app.post("/edit/{old_name}")
+async def edit_student(
+    old_name: str,
+    name: str = Form(...),
+    class_name: str = Form(...),
+    parent_name: str = Form(...),
+    parent_code: str = Form(...),
+    photo: Optional[UploadFile] = File(None),
+):
+    safe_name = safe_filename(name)
+    class_name = class_name.strip()
+    parent_name = parent_name.strip()
+    parent_code = parent_code.strip()
+    photo_path = None
+    embedding = None
+
+    old_student = get_student_by_name(old_name)
+    if old_student is None:
+        return HTMLResponse(page("Ошибка", """
+            <h1>Ученик не найден</h1>
+            <a class="btn light" href="/students">Назад</a>
+        """), status_code=404)
+
+    if photo is not None and photo.filename:
+        upload_path = os.path.join(FACE_DIR, f"{safe_name}_edit_upload.jpg")
+        with open(upload_path, "wb") as file:
+            shutil.copyfileobj(photo.file, file)
+
+        img = cv2.imread(upload_path)
+        faces = get_face_app().get(img) if img is not None else []
+        if not faces:
+            if os.path.exists(upload_path):
+                os.remove(upload_path)
+            return HTMLResponse(page("Ошибка", """
+                <h1>Лицо не найдено</h1>
+                <p>Загрузите фото, где лицо ученика видно ясно.</p>
+                <a class="btn light" href="/students">Назад</a>
+            """), status_code=400)
+        embedding = faces[0].embedding
+        photo_path = os.path.join(FACE_DIR, f"{safe_name}.jpg")
+        os.replace(upload_path, photo_path)
+        photo_path = photo_path.replace("\\", "/")
+
+    if not update_student(old_name, safe_name, class_name, parent_name, parent_code, photo_path, embedding):
+        return HTMLResponse(page("Ошибка", """
+            <h1>Не удалось сохранить</h1>
+            <p>Возможно, ученик с таким именем уже есть.</p>
+            <a class="btn light" href="/students">Назад</a>
+        """), status_code=400)
+
+    old_photo_path = old_student[2]
+    if photo_path and old_photo_path and old_photo_path != photo_path and os.path.exists(old_photo_path):
+        os.remove(old_photo_path)
+
+    load_known_faces(force=True)
+    return RedirectResponse(url="/students", status_code=303)
+
+
 @app.post("/add")
 async def add_student(
     name: str = Form(...),
@@ -131,8 +210,9 @@ async def add_student(
 
 @app.get("/delete/{name}")
 async def delete_student(name: str):
+    student = get_student_by_name(name)
     delete_student_by_name(name)
-    photo_path = os.path.join(FACE_DIR, f"{safe_filename(name)}.jpg")
+    photo_path = student[2] if student else os.path.join(FACE_DIR, f"{safe_filename(name)}.jpg")
     if os.path.exists(photo_path):
         os.remove(photo_path)
     load_known_faces(force=True)

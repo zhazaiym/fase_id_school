@@ -28,6 +28,7 @@ a { color: var(--blue); text-decoration: none; }
 .top { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 22px; }
 .inline-form { display: inline-block; margin: 0; }
 .clear-attendance-form { margin-bottom: 12px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .btn {
     display: inline-block;
     border: 0;
@@ -52,6 +53,7 @@ th, td { border-bottom: 1px solid var(--line); padding: 10px; text-align: left; 
 th { background: #eef2ff; }
 tr:last-child td { border-bottom: 0; }
 img.photo { width: 54px; height: 54px; object-fit: cover; border-radius: 7px; }
+.edit-photo { display: flex; gap: 12px; align-items: center; margin: 0 0 14px; }
 img.camera { width: 100%; height: auto; background: #111827; border-radius: 8px; }
 .muted { color: #6b7280; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
