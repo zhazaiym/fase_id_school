@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.log
+.venv/
+venv/
+env/
+.idea/
+.vscode/
+
+# Runtime data. Keep existing data safe, but do not add new generated files by accident.
+screenshots/
+face_database/
+school.db
+*.db-journal
+*.db-shm
+*.db-wal
+.env
